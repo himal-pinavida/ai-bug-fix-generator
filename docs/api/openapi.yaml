@@ -1,0 +1,284 @@
+openapi: 3.0.3
+info:
+  title: AI Bug Fix Generator API
+  version: 1.0.0
+  description: |
+    Story 12 backend contract. POST /api/fix validates a pasted code snippet and error message,
+    proxies a JSON-mode request to an OpenAI-compatible provider, and returns six snake_case fields.
+    Every response carries a server-generated UUID v4 X-Correlation-Id header.
+
+    The total JSON request body is limited to 102,400 bytes (100 KB). Oversized bodies return 400
+    with code PAYLOAD_TOO_LARGE; they do not return body-parser's default 413.
+servers:
+  - url: http://localhost:3001
+    description: Local development default (PORT)
+tags:
+  - name: Fix
+  - name: Health
+paths:
+  /api/fix:
+    post:
+      tags: [Fix]
+      operationId: createFix
+      summary: Generate a structured fix for a code snippet and error message
+      parameters:
+        - $ref: '#/components/parameters/CorrelationIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FixRequest'
+            example:
+              code_snippet: |-
+                function add(a, b) {
+                  return a - b;
+                }
+              error_message: 'AssertionError: expected 3 but received -1'
+      responses:
+        '201':
+          description: AI-generated fix. Exactly six fields.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FixResponse'
+        '400':
+          description: |
+            Validation failure (VALIDATION_ERROR), total JSON body over 102,400 bytes
+            (PAYLOAD_TOO_LARGE), or malformed JSON (INVALID_JSON).
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                validation:
+                  value:
+                    statusCode: 400
+                    error: Bad Request
+                    code: VALIDATION_ERROR
+                    message: 'Validation failed for: code_snippet'
+                    correlationId: 4c2b85e0-72a1-4cc4-be7a-1f8c6f1f6b6a
+                    details:
+                      - field: code_snippet
+                        message: code_snippet must be a string
+                payloadTooLarge:
+                  value:
+                    statusCode: 400
+                    error: Bad Request
+                    code: PAYLOAD_TOO_LARGE
+                    message: Request body exceeds the 100KB limit.
+                    correlationId: 4c2b85e0-72a1-4cc4-be7a-1f8c6f1f6b6a
+                invalidJson:
+                  value:
+                    statusCode: 400
+                    error: Bad Request
+                    code: INVALID_JSON
+                    message: Request body must be valid JSON.
+                    correlationId: 4c2b85e0-72a1-4cc4-be7a-1f8c6f1f6b6a
+        '500':
+          description: Unexpected server or provider failure. Generic message only; no stack or internals.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                statusCode: 500
+                error: Internal Server Error
+                code: INTERNAL_SERVER_ERROR
+                message: An unexpected error occurred.
+                correlationId: 4c2b85e0-72a1-4cc4-be7a-1f8c6f1f6b6a
+        '503':
+          description: OPENAI_API_KEY is not configured; the service is in degraded mode.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                statusCode: 503
+                error: Service Unavailable
+                code: AI_PROVIDER_UNAVAILABLE
+                message: The AI provider is not configured. Set OPENAI_API_KEY and restart the service.
+                correlationId: 4c2b85e0-72a1-4cc4-be7a-1f8c6f1f6b6a
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Readiness/configuration health check (never performs inference)
+      parameters:
+        - $ref: '#/components/parameters/CorrelationIdHeader'
+      responses:
+        '200':
+          description: Provider configured and service healthy.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+                uptime: 12.34
+                timestamp: '2026-11-09T15:44:11.000Z'
+                checks:
+                  aiProvider:
+                    status: up
+        '503':
+          description: Provider key missing; service is running in degraded mode.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/XCorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: unhealthy
+                uptime: 12.34
+                timestamp: '2026-11-09T15:44:11.000Z'
+                checks:
+                  aiProvider:
+                    status: down
+                    message: OPENAI_API_KEY is not configured; the service is running in degraded mode.
+components:
+  parameters:
+    CorrelationIdHeader:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: Ignored if supplied; the server always generates a fresh UUID v4 and returns it.
+      schema:
+        type: string
+        format: uuid
+  headers:
+    XCorrelationId:
+      description: Server-generated UUID v4 for this request.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    FixRequest:
+      type: object
+      additionalProperties: false
+      required: [code_snippet, error_message]
+      properties:
+        code_snippet:
+          type: string
+          minLength: 1
+          maxLength: 102400
+          pattern: '\S'
+          description: Pasted source code. Total JSON body must also be at most 102,400 bytes.
+        error_message:
+          type: string
+          minLength: 1
+          maxLength: 102400
+          pattern: '\S'
+          description: Error text to diagnose.
+    FixResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - fixed_code
+        - explanation
+        - root_cause
+        - similar_issues
+        - test_suggestions
+        - disclaimer
+      properties:
+        fixed_code:
+          type: string
+        explanation:
+          type: string
+        root_cause:
+          type: string
+        similar_issues:
+          type: array
+          items:
+            type: string
+        test_suggestions:
+          type: array
+          items:
+            type: string
+        disclaimer:
+          type: string
+          description: Non-empty; falls back to the standard AI-review notice if the provider omits it.
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [statusCode, error, code, message, correlationId]
+      properties:
+        statusCode:
+          type: integer
+          example: 400
+        error:
+          type: string
+          example: Bad Request
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - PAYLOAD_TOO_LARGE
+            - INVALID_JSON
+            - INTERNAL_SERVER_ERROR
+            - AI_PROVIDER_UNAVAILABLE
+        message:
+          type: string
+        correlationId:
+          type: string
+          description: Matches the X-Correlation-Id response header.
+        details:
+          type: array
+          description: Present for validation failures.
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, uptime, timestamp, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, unhealthy]
+        uptime:
+          type: number
+          description: Process uptime in seconds.
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties: false
+          required: [aiProvider]
+          properties:
+            aiProvider:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [up, down]
+                message:
+                  type: string
+                  description: Safe explanation when the provider is down.

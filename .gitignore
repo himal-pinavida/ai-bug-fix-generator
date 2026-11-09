@@ -1,0 +1,26 @@
+# Dependencies & build artifacts — NEVER commit these.
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Test / coverage output
+test-results/
+coverage/
+*.lcov
+
+# Logs / environment
+*.log
+logs/
+.env
+.env.local
+.env.*.local
+
+# Pipeline scratch space (never part of the source project)
+files/
+output_files/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
